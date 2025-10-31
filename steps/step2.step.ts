@@ -6,8 +6,9 @@ import { EventConfig } from "motia"
 export const config: EventConfig = {
     name: "ResolveChannelNameToId",
     type: "event",
+    input: {} as any,
     subscribes: ['yt.submit'],
-    emits: ['yt.channelIdResolved', "yt.channel.error"]
+    emits: ['yt.channel.Resolved', "yt.channel.error"]
 }
 
 export const handler = async (eventData: any, { emit, logger, state }: any) => {
@@ -44,15 +45,22 @@ export const handler = async (eventData: any, { emit, logger, state }: any) => {
             const handle = channelName.substring(1); // Remove '@' symbol
 
             const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&q=${encodeURIComponent(
-                handle
+                channelName
             )}&key=${YOUTUBE_API_KEY}`;
             const searchResponse = await fetch(searchUrl);
             const searchResult = await searchResponse.json();
             // docs of youtube api for reference : https://developers.google.com/youtube/v3/docs/search/list
 
+            logger.info("YouTube search API response", {
+                itemsFound: searchResult.items?.length || 0,
+                error: searchResult.error
+            });
+
             if (searchResult.items && searchResult.items.length > 0) {
-                channelId = searchResult.items[0].snippet.channelId;
+                // For search API, channelId is in id.channelId, not snippet.channelId
+                channelId = searchResult.items[0].id?.channelId || searchResult.items[0].snippet?.channelId;
                 channelNamer = searchResult.items[0].snippet.title;
+                logger.info("Found channel", { channelId, channelNamer });
             }
 
             else {
@@ -75,16 +83,27 @@ export const handler = async (eventData: any, { emit, logger, state }: any) => {
 
             await state.set(`job_${jobId}`, {
                 ...jobData,
-                state: "error",
+                state: "failed",
                 errorMessage: "Channel ID not found for the given channel name",
             });
+            await emit({
+                topic: 'yt.channel.error',
+                data: {
+                    jobId,
+                    email,
+                    channelId,
+                    channelNamer
+                }
+            });
+            return;
         }
         await emit({
-            topic: 'yt.',
+            topic: 'yt.channel.Resolved',
             data: {
                 jobId,
                 email,
-
+                channelId,
+                channelName: channelNamer
             }
         });
         return;
@@ -115,3 +134,5 @@ export const handler = async (eventData: any, { emit, logger, state }: any) => {
                 error: 'failed to resolve channel name to id'
             }
         });
+    }
+};
